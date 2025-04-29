@@ -177,16 +177,7 @@ class Tennis_preprocessing:
         df["winner_hand"], df["loser_hand"] = hand_surface_score_ioc_imputer.fit_transform(df[["winner_hand", "loser_hand"]]).T
         df["surface"], df["score"] = hand_surface_score_ioc_imputer.fit_transform(df[["surface", "score"]]).T
 
-        # # instantiating imputer
 
-        # # failed attempt to randomly impute ranks bigger than the max rank to not create bias in favor of a specific value. should revisit
-        # # for now we just impute the same value, but this imports some bias possibly...
-        # # rank_imputer = SimpleImputer(strategy = "constant", fill_value = max_rank+np.random.randint(0, 0.1*max_rank))
-        # rank_imputer = SimpleImputer(strategy = "constant", fill_value = max_rank+1, keep_empty_features = True)
-
-
-        # # fitting and transforming
-        # df["winner_rank"], df["loser_rank"] = rank_imputer.fit_transform(df[["winner_rank", "loser_rank"]]).T
 
         ##############################################
         # filling unranked player rank points with 0 #
