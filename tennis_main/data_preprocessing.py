@@ -85,6 +85,8 @@ FEATURES_FOR_ROBUST_SCALING = ["player_A_rank_points", "player_B_rank_points",
                       "player_A_rank", "player_B_rank", "player_A_ht", "player_B_ht", "player_A_seed",
                       "player_B_seed", "draw_size", "player_A_age", "player_B_age"]
 
+FEATURES_TO_RECOMBINE = ["same_hand", "player_A_is_seeded", "player_B_is_seeded"]
+
 # casting int to float to avoid FutureWarning due to setting an item of incompatible dtype
 # when scaling.
 COLS_TO_CAST_FLOAT = list(set(FEATURES_FOR_STANDARD_SCALING + FEATURES_FOR_ROBUST_SCALING))
@@ -94,7 +96,7 @@ COLS_TO_CAST_FLOAT = list(set(FEATURES_FOR_STANDARD_SCALING + FEATURES_FOR_ROBUS
 
 class Tennis_preprocessing:
     def __init__(self):
-        self.singles_data =Tennis().get_singles()
+        self.singles_data = Tennis().get_singles()
 
         # # for possible future reference
         # self.players_data = Tennis().get_players()
@@ -212,6 +214,7 @@ class Tennis_preprocessing:
 
         return df
 
+
     def target_column(self, df, seed = SEED) -> pd.DataFrame:
         """
         Method that turns winner and loser into player_A and player_B.
@@ -249,6 +252,15 @@ class Tennis_preprocessing:
 
         return df
 
+    def same_hand(self, df) -> pd.DataFrame:
+        """
+        Method that creates a binary column that shows whether the 2 players
+        use the same hand or not.
+        """
+        df["same_hand"] = (df["player_A_hand"] == df["player_B_hand"]).astype(int)
+
+        return df
+
     def create_diffs(self,df) -> pd.DataFrame:
         """
         This method creates differences of features between players, like age, height,
@@ -271,6 +283,7 @@ class Tennis_preprocessing:
         df = self.duplicates_and_match_stats(df)
         df = self.missing_values(df)
         df = self.target_column(df)
+        df = self.same_hand(df)
         df = self.create_diffs(df)
 
         # casting to float
@@ -405,8 +418,8 @@ class Tennis_preprocessing:
         X_test.reset_index(inplace = True)
 
         # recombining
-        X_train_combined = pd.concat([X_train[scaled_feats], X_train_encoded_df], axis=1)
-        X_test_combined = pd.concat([X_test[scaled_feats], X_test_encoded_df], axis=1)
+        X_train_combined = pd.concat([X_train[scaled_feats], X_train_encoded_df, X_train[FEATURES_TO_RECOMBINE]], axis=1)
+        X_test_combined = pd.concat([X_test[scaled_feats], X_test_encoded_df, X_test[FEATURES_TO_RECOMBINE]], axis=1)
 
         return X_train_combined, X_test_combined
 
@@ -427,6 +440,7 @@ class Tennis_preprocessing:
     def full_preprocess_one_df_MVP(self, df):
         """
         Performs the full cleaning and preprocessing steps to a single df.
+        Returns X_train, X_test, y_train, y_test
         """
         cleaned_df = self.clean_singles_MVP_one_df(df)
         X_train, X_test, y_train, y_test = self.split_scale_encode_MVP_one_df(cleaned_df)
