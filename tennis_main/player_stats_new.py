@@ -573,8 +573,8 @@ class Player:
             df_surf = df[df["surface"] == surface]
 
             # checking if df_surf is empty, to skip this surface if True and avoid potential issues
-            if df_surf.empty:
-                continue
+            # if df_surf.empty:
+            #     continue
 
             # calculate rolling stats per surface
             df_surf_with_stats = self.rolling_sums_avgs(df_surf, recent_matches, time_window)
@@ -600,7 +600,7 @@ class Player:
 
         return df_out
 
-    def rolling_advanced_ratios(self, df: pd.DataFrame, recent_matches: int = 10, time_window_str: str = "90D"):
+    def rolling_advanced_ratios(self, df: pd.DataFrame, recent_matches: int = 10, time_window: str = "90D"):
         """
         Method that calculates rolling ratios of advanced statistics, to account for recent form.
         It computes these by dividing the rolling sum of the numerator stat by the
@@ -619,7 +619,8 @@ class Player:
             pd.DataFrame: DataFrame with added rolling advanced ratio columns.
         """
         df = df.copy()
-        time_suffix = f"{recent_matches}_{time_window_str}"
+
+        time_suffix = f"{recent_matches}_{time_window}"
 
         # defining numerator and denominator prefixes for the rolling sum cols
         # key: prefix for the new ratio_column (e.g., "1st_serve_won")
@@ -654,47 +655,48 @@ class Player:
         Method that calculates advanced ratios on a per-surface basis. Note that to account for rareness of surfaces
         it (should) be applied to a wider time window, than the default 90 days.
         """
-        df_out = df.copy()
+        df = df.copy()
+        df_out = df # Work on the original copy
+        time_suffix = f"{recent_matches}_{time_window}"
 
-        time_name = time_window
+        # defining numerator and denominator prefixes for the rolling sum cols
+        # key: prefix for the new ratio_column (e.g., "1st_serve_won")
+        # value: (numerator_sum_prefix, denominator_sum_prefix)
+        # these prefixes correspond to the `player_*` stats.
+        ratio_definitions = {"1st_serve_won": ("player_1stWon_roll_sum", "player_1stIn_roll_sum"),
+                                "2nd_serve_won": ("player_2ndWon_roll_sum", "player_2ndIn_roll_sum"),
+                                "ace_p_point": ("player_ace_roll_sum", "player_svpt_roll_sum"),
+                                "df_p_point": ("player_df_roll_sum", "player_svpt_roll_sum"),
+                                "bp_saved": ("player_bpSaved_roll_sum", "player_bpFaced_roll_sum"),
+                                "bp_conversion": ("player_bp_won_roll_sum", "player_bp_caused_roll_sum"),
+                                "break_pctg": ("player_bp_won_roll_sum","player_served_games_against_player_roll_sum"),
+                                "hold_pctg": ("player_serve_games_held_roll_sum", "player_SvGms_roll_sum"),
+                                "tiebreaks_won": ("player_tiebreaks_won_roll_sum", "player_tiebreaks_happened_roll_sum"),
+                                "tiebreaks_lost": ("player_tiebreaks_lost_roll_sum", "player_tiebreaks_happened_roll_sum")
+                                }
 
-        all_new_columns = []
-
-        # stats for each surface and joining with original df
         for surface in self.SURFACES:
+            df_surface = df[df["surface"] == surface]
 
-            df_surf = df[df["surface"] == surface]
+            # if df_surface.empty:
+            #     continue
 
-            # checking if df_surf is empty, to skip this surface if True and avoid potential issues
-            if df_surf.empty:
-                continue
+            surface_suffix = surface.lower()
 
-            # calculate rolling stats per surface
-            df_surf_with_sums = self.rolling_sums_avgs(df_surf, recent_matches, time_window)
-            df_surf_with_stats = self.rolling_advanced_ratios(df_surf_with_sums, recent_matches, time_window)
+            for ratio_prefix, (num_prefix, den_prefix) in ratio_definitions.items():
+                num_col = f"{num_prefix}_{time_suffix}_{surface_suffix}"
+                den_col = f"{den_prefix}_{time_suffix}_{surface_suffix}"
+                new_ratio_col = f"roll_{ratio_prefix}_ratio_{time_suffix}_{surface_suffix}"
 
-            new_cols = [c for c in df_surf_with_stats.columns if c.endswith(f"roll_ratio_{recent_matches}_{time_name}")]
-
-            # renaming new cols per surface
-            rename_dict = {col: f"{col}_{surface.lower()}" for col in new_cols}
-            surface_stats_renamed = df_surf_with_stats[new_cols].rename(columns=rename_dict)
-
-            all_new_columns.extend(surface_stats_renamed.columns)
-
-            # joining on the index, which is preserved from the original df.
-            df_out = df_out.join(surface_stats_renamed)
-
-        if all_new_columns:
-
-            # forward-filling new columns to propagate the last known value to subsequent matches on other surfaces
-            df_out[all_new_columns] = df_out[all_new_columns].ffill()
-
-            # filling any remaining NaNs with 0
-            df_out[all_new_columns] = df_out[all_new_columns].fillna(0)
+                if num_col in df_out.columns and den_col in df_out.columns:
+                    df_out[new_ratio_col] = (df_out[num_col] / df_out[den_col]).replace([np.inf, -np.inf], np.nan).fillna(0)
+                else:
+                    print(f"Warning: Numerator '{num_col}' or Denominator '{den_col}' not found for '{new_ratio_col}'. Skipping.")
 
         return df_out
 
-    def generate_master_feature_dataframe(self) -> pd.DataFrame:
+
+    def generate_master_feature_dataframe(self, starting_date = pd.to_datetime("2000-01-01")) -> pd.DataFrame:
         """
         Generates a master DataFrame with lagged cumulative stats for all players
         across all their matches and saves it to a Parquet file.
@@ -724,6 +726,15 @@ class Player:
         print("Applying date offset globally...")
         combined_df_with_adj_date = self.date_offset(combined_df)
 
+        # filtering data from the starting date
+        if starting_date:
+            print(f"Filtering data from {starting_date.strftime('%Y-%m-%d')} onwards...")
+
+            # 'tourney_date' is converted to datetime inside date_offset
+            combined_df_with_adj_date = combined_df_with_adj_date[combined_df_with_adj_date['tourney_date'] >= starting_date].copy()
+            print(f"Shape after date filtering: {combined_df_with_adj_date.shape}")
+
+
         # making explicit features that are needed for calculations
         print("Creating basic features...")
         combined_df_with_basic_features = self.create_basic_features(combined_df_with_adj_date)
@@ -737,9 +748,31 @@ class Player:
 
         combined_df_with_basic_features.sort_values(by=sort_keys, inplace=True)
 
-        # extracting player ids
-        all_player_ids = sorted(list(self.set_all_player_ids(combined_df_with_basic_features)))
+        # extracting player ids  - - - -  uncomment the other definition of all_player_ids for short test run
+        all_player_ids = sorted(list(self.set_all_player_ids(combined_df_with_basic_features))) # all_player_ids = [104053, 101662]
+
         print(f"Found {len(all_player_ids)} unique player IDs.")
+
+        # processing one player first to get the whole column structure
+        print("Processing first player to determine column structure...")
+        first_player_id = all_player_ids[0]
+
+        player_all_matches_df = self.find_player_rows(first_player_id, combined_df_with_basic_features, surface = "A")
+        player_imputed_df = self.impute_player_match_stats_with_lagged_avg(first_player_id, player_all_matches_df)
+        player_cumul_stats_df = self.find_cumul_stats(first_player_id, player_imputed_df)
+        player_matches_and_wins_df = self.find_matches_and_wins(first_player_id, player_cumul_stats_df)
+        player_advanced_ratio_stats_df = self.find_advanced_ratio_statistics(player_matches_and_wins_df)
+        player_per_match_averages_df = self.find_per_match_averages(player_advanced_ratio_stats_df)
+        player_cleaned_df = self.clean_player_data(first_player_id, player_per_match_averages_df)
+        player_rolling_stats_df = self.rolling_sums_avgs(player_cleaned_df, recent_matches = 10, time_window = "90D")
+        player_rolling_stats_df_p_surface = self.rolling_sums_avgs_p_surface(player_rolling_stats_df, recent_matches = 10, time_window = "90D")
+        player_advanced_df = self.rolling_advanced_ratios(player_rolling_stats_df_p_surface, recent_matches = 10, time_window = "90D")
+        player_advanced_df_p_surface = self.rolling_advanced_ratios_p_surface(player_advanced_df, recent_matches = 10, time_window = "90D")
+
+        # get the expected stat columns from the first player
+        all_stat_cols = [col for col in player_advanced_df_p_surface.columns if col.startswith('cumul_') or 'roll_' in col]
+        all_cols = len(player_advanced_df_p_surface.columns)
+        print(f"Expected stat columns: {len(all_stat_cols)}. Total columns: {all_cols}")
 
         list_of_player_feature_dfs = []
         match_identifier_cols = ['tourney_id', 'match_num', 'adjusted_date', 'tourney_date']
@@ -748,52 +781,43 @@ class Player:
             print("Warning: 'match_num' not in DataFrame. It will be excluded from identifiers.")
             match_identifier_cols.remove('match_num')
 
-        # start processing
-        print(f"Processing players...")
+        # start processing all players
+        print(f"Processing all players...")
+
         for i, player_id in enumerate(all_player_ids):
             # showing the progress
             print(f"Processing player {i+1}/{len(all_player_ids)}: ID {player_id}")
 
-            # per player df
-            player_all_matches_df = self.find_player_rows(player_id, combined_df_with_basic_features, surface = "A")
-
-            # imputing missing values before any calculations
-            player_imputed_df = self.impute_player_match_stats_with_lagged_avg(player_id, player_all_matches_df)
-
-            # cumulative stats
-            player_cumul_stats_df = self.find_cumul_stats(player_id, player_imputed_df)
-
-            # matches and wins
-            player_matches_and_wins_df = self.find_matches_and_wins(player_id, player_cumul_stats_df)
-
-            # advanced ratio statistics
-            player_advanced_ratio_stats_df = self.find_advanced_ratio_statistics(player_matches_and_wins_df)
-
-            # per match averages
-            player_per_match_averages_df = self.find_per_match_averages(player_advanced_ratio_stats_df)
-
-            # cleaning player data
-            player_cleaned_df = self.clean_player_data(player_id, player_per_match_averages_df)
-
-            # applying rolling stats
-            player_rolling_stats_df = self.rolling_sums_avgs(player_cleaned_df, recent_matches = 10, time_window = "90D")
-            player_rolling_stats_df_p_surface = self.rolling_sums_avgs_p_surface(player_rolling_stats_df, recent_matches = 10, time_window = "90D")
-
-            player_advanced_df = self.rolling_advanced_ratios(player_rolling_stats_df_p_surface, recent_matches = 10, time_window_str = "90D")
-            player_advanced_df_p_surface = self.rolling_advanced_ratios_p_surface(player_advanced_df, recent_matches = 10, time_window = "90D")
-
-            # concantenating all player stats
-            player_stats_df = player_advanced_df_p_surface.copy()
+            if player_id == first_player_id:
+                # Use the already processed first player
+                player_stats_df = player_advanced_df_p_surface.copy()
+            else:
+                # per player df
+                player_all_matches_df = self.find_player_rows(player_id, combined_df_with_basic_features, surface = "A")
+                player_imputed_df = self.impute_player_match_stats_with_lagged_avg(player_id, player_all_matches_df)
+                player_cumul_stats_df = self.find_cumul_stats(player_id, player_imputed_df)
+                player_matches_and_wins_df = self.find_matches_and_wins(player_id, player_cumul_stats_df)
+                player_advanced_ratio_stats_df = self.find_advanced_ratio_statistics(player_matches_and_wins_df)
+                player_per_match_averages_df = self.find_per_match_averages(player_advanced_ratio_stats_df)
+                player_cleaned_df = self.clean_player_data(player_id, player_per_match_averages_df)
+                player_rolling_stats_df = self.rolling_sums_avgs(player_cleaned_df, recent_matches = 10, time_window = "90D")
+                player_rolling_stats_df_p_surface = self.rolling_sums_avgs_p_surface(player_rolling_stats_df, recent_matches = 10, time_window = "90D")
+                player_advanced_df = self.rolling_advanced_ratios(player_rolling_stats_df_p_surface, recent_matches = 10, time_window = "90D")
+                player_advanced_df_p_surface = self.rolling_advanced_ratios_p_surface(player_advanced_df, recent_matches = 10, time_window = "90D")
+                player_stats_df = player_advanced_df_p_surface.copy()
 
             # creating lagged stats because we want each row to have the stats up to the last match before the one in it
             lagged_player_stats_df = player_stats_df.copy()
 
-            stat_cols = [col for col in player_stats_df.columns if col.startswith('cumul_') or '_roll_' in col]
-
+            # using predefined column set for all players
+            # filling missing columns with 0 for players who don't have them (though there shouldn't be any)
+            for col in all_stat_cols:
+                if col not in lagged_player_stats_df.columns:
+                    lagged_player_stats_df[col] = 0
 
             # creating lagged versions of stat columns of historical stats of the player
-            lagged_features_df = lagged_player_stats_df[stat_cols].shift(1).fillna(0)
-            lagged_features_df.columns = [f"career_{col}" for col in stat_cols]
+            lagged_features_df = lagged_player_stats_df[all_stat_cols].shift(1).fillna(0)
+            lagged_features_df.columns = [f"career_{col}" for col in all_stat_cols]
 
             # combining columns, surface, and the lagged features
             final_cols_base = match_identifier_cols + ['surface']
@@ -815,7 +839,6 @@ class Player:
                 print(f"Saving master feature DataFrame to: {output_path}")
 
                 # ensuring directory exists
-
                 os.makedirs(os.path.dirname(output_path), exist_ok=True)
                 master_df.to_parquet(output_path, index=False)
                 print("Successfully saved to Parquet.")

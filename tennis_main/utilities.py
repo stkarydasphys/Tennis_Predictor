@@ -2,7 +2,7 @@
 This module contains various functions that are used for simple tasks throughout
 """
 
-def score_parser(strng):
+def score_parser(strng: str) -> tuple[int, int, int]:
     """
     Parses the score to generate tiebreaks.
     """
